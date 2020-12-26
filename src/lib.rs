@@ -104,9 +104,6 @@
 //!         CountingGame(5)]);
 //! ```
 
-extern crate crossbeam;
-extern crate smallvec;
-
 mod search_tree;
 mod atomics;
 pub mod tree_policy;
@@ -121,7 +118,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-pub trait MCTS: Sized + Sync {
+pub trait MCTS: Sized + Sync + 'static {
     type State: GameState + Sync;
     type Eval: Evaluator<Self>;
     type TreePolicy: TreePolicy<Self>;
@@ -132,20 +129,26 @@ pub trait MCTS: Sized + Sync {
     fn virtual_loss(&self) -> i64 {
         0
     }
+
     fn visits_before_expansion(&self) -> u64 {
         1
     }
+
     fn node_limit(&self) -> usize {
         std::usize::MAX
     }
+
     fn select_child_after_search<'a>(&self, children: &'a [MoveInfo<Self>]) -> &'a MoveInfo<Self> {
         children.into_iter().max_by_key(|child| child.visits()).unwrap()
     }
+
     /// `playout` panics when this length is exceeded. Defaults to one million.
     fn max_playout_length(&self) -> usize {
         1_000_000
     }
+
     fn on_backpropagation(&self, _evaln: &StateEvaluation<Self>, _handle: SearchHandle<Self>) {}
+
     fn cycle_behaviour(&self) -> CycleBehaviour<Self> {
         if std::mem::size_of::<Self::TranspositionTable>() == 0 {
             CycleBehaviour::Ignore
@@ -159,6 +162,20 @@ pub struct ThreadData<Spec: MCTS> {
     pub policy_data: TreePolicyThreadData<Spec>,
     pub extra_data: Spec::ExtraThreadData,
 }
+
+impl<Spec: MCTS> Clone for ThreadData<Spec>
+where
+    TreePolicyThreadData<Spec>: Clone,
+    Spec::ExtraThreadData: Clone,
+{
+    fn clone(&self) -> Self {
+        ThreadData {
+            policy_data: self.policy_data.clone(),
+            extra_data: self.extra_data.clone(),
+        }
+    }
+}
+
 
 impl<Spec: MCTS> Default for ThreadData<Spec>
     where TreePolicyThreadData<Spec>: Default, Spec::ExtraThreadData: Default
@@ -205,7 +222,6 @@ pub trait Evaluator<Spec: MCTS>: Sync {
         player: &Player<Spec>) -> i64;
 }
 
-
 pub struct MCTSManager<Spec: MCTS> {
     search_tree: SearchTree<Spec>,
     // thread local data when we have no asynchronous workers
@@ -233,26 +249,30 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
         }
         self.search_tree.playout(self.single_threaded_tld.as_mut().unwrap());
     }
-    pub fn playout_until<Predicate: FnMut() -> bool>(&mut self, mut pred: Predicate) {
+
+    pub fn playout_until(&mut self, mut pred: impl FnMut() -> bool) {
         while !pred() {
             self.playout();
         }
     }
+
     pub fn playout_n(&mut self, n: u64) {
         for _ in 0..n {
             self.playout();
         }
     }
+
     unsafe fn spawn_worker_thread(&self, stop_signal: Arc<AtomicBool>) -> JoinHandle<()> {
         let search_tree = &self.search_tree;
+        let search_tree: &'static SearchTree<Spec> = std::mem::transmute(search_tree);
         let print_on_playout_error = self.print_on_playout_error;
-        crossbeam::spawn_unsafe(move || {
+
+        std::thread::spawn(move || {
             let mut tld = Default::default();
             loop {
                 if stop_signal.load(Ordering::SeqCst) {
                     break;
-                }
-                if !search_tree.playout(&mut tld) {
+                } else if !search_tree.playout(&mut tld) {
                     if print_on_playout_error {
                         eprintln!("Node limit of {} reached. Halting search.",
                             search_tree.spec().node_limit());
@@ -262,7 +282,8 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
             }
         })
     }
-    pub fn playout_parallel_async<'a>(&'a mut self, num_threads: usize) -> AsyncSearch<'a, Spec> {
+
+    pub fn playout_parallel_async(&mut self, num_threads: usize) -> AsyncSearch<'_, Spec> {
         assert!(num_threads != 0);
         let stop_signal = Arc::new(AtomicBool::new(false));
         let threads = (0..num_threads).map(|_| {
@@ -277,6 +298,7 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
             threads,
         }
     }
+
     pub fn into_playout_parallel_async(self, num_threads: usize) -> AsyncSearchOwned<Spec> {
         assert!(num_threads != 0);
         let self_box = Box::new(self);
@@ -293,11 +315,13 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
             threads
         }
     }
+
     pub fn playout_parallel_for(&mut self, duration: Duration, num_threads: usize) {
         let search = self.playout_parallel_async(num_threads);
         std::thread::sleep(duration);
         search.halt();
     }
+
     pub fn playout_n_parallel(&mut self, n: u32, num_threads: usize) {
         if n == 0 {
             return;
@@ -305,12 +329,12 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
         assert!(num_threads != 0);
         let counter = AtomicIsize::new(n as isize);
         let search_tree = &self.search_tree;
-        crossbeam::scope(|scope| {
+        rayon::scope(|scope| {
             for _ in 0..num_threads {
-                scope.spawn(|| {
+                scope.spawn(|_| {
                     let mut tld = Default::default();
                     loop {
-                        let count = counter.fetch_sub(1, Ordering::SeqCst);
+                        let count = counter.fetch_sub(1, Ordering::AcqRel);
                         if count <= 0 {
                             break;
                         }
@@ -320,9 +344,11 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
             }
         });
     }
+
     pub fn principal_variation_info(&self, num_moves: usize) -> Vec<MoveInfoHandle<Spec>> {
         self.search_tree.principal_variation(num_moves)
     }
+
     pub fn principal_variation(&self, num_moves: usize) -> Vec<Move<Spec>> {
         self.search_tree.principal_variation(num_moves)
             .into_iter()
@@ -330,6 +356,7 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
             .map(|x| x.clone())
             .collect()
     }
+
     pub fn principal_variation_states(&self, num_moves: usize)
             -> Vec<Spec::State> {
         let moves = self.principal_variation(num_moves);
@@ -341,10 +368,15 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
         }
         states
     }
-    pub fn tree(&self) -> &SearchTree<Spec> {&self.search_tree}
+
+    pub fn tree(&self) -> &SearchTree<Spec> {
+        &self.search_tree
+    }
+
     pub fn best_move(&self) -> Option<Move<Spec>> {
         self.principal_variation(1).get(0).map(|x| x.clone())
     }
+
     pub fn perf_test<F>(&mut self, num_threads: usize, mut f: F) where F: FnMut(usize) {
         let search = self.playout_parallel_async(num_threads);
         for _ in 0..10 {
@@ -359,9 +391,11 @@ impl<Spec: MCTS> MCTSManager<Spec> where ThreadData<Spec>: Default {
             f(diff);
         }
     }
+
     pub fn perf_test_to_stderr(&mut self, num_threads: usize) {
         self.perf_test(num_threads, |x| eprintln!("{} nodes/sec", thousands_separate(x)));
     }
+
     pub fn reset(self) -> Self {
         Self {
             search_tree: self.search_tree.reset(),
@@ -413,10 +447,12 @@ impl<Spec: MCTS> AsyncSearchOwned<Spec> {
         self.stop_signal.store(true, Ordering::SeqCst);
         drain_join_unwrap(&mut self.threads);
     }
+
     pub fn halt(mut self) -> MCTSManager<Spec> {
         self.stop_threads();
         *self.manager.take().unwrap()
     }
+
     pub fn num_threads(&self) -> usize {
         self.threads.len()
     }

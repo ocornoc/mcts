@@ -1,5 +1,4 @@
-extern crate rand;
-use self::rand::{XorShiftRng, Rng, SeedableRng};
+use rand::prelude::*;
 
 use std;
 use super::*;
@@ -132,12 +131,12 @@ impl<Spec: MCTS<TreePolicy=Self>> TreePolicy<Spec> for AlphaGoPolicy
 
 #[derive(Clone)]
 pub struct PolicyRng {
-    rng: XorShiftRng
+    rng: SmallRng
 }
 
 impl PolicyRng {
     pub fn new() -> Self {
-        let rng = SeedableRng::from_seed([1, 2, 3, 4]);
+        let rng = SeedableRng::seed_from_u64(0xF00DBABEC0FFEE60);
         Self {rng}
     }
 
@@ -145,7 +144,7 @@ impl PolicyRng {
         where Iter: Iterator<Item=T>, KeyFn: FnMut(&T) -> f64
     {
         let mut choice = None;
-        let mut num_optimal: u32 = 0;
+        let mut num_optimal = 0;
         let mut best_so_far: f64 = std::f64::NEG_INFINITY;
         for elt in elts {
             let score = key_fn(&elt);
@@ -155,7 +154,7 @@ impl PolicyRng {
                 best_so_far = score;
             } else if score == best_so_far {
                 num_optimal += 1;
-                if self.rng.gen_weighted_bool(num_optimal) {
+                if self.rng.gen_ratio(1.min(num_optimal), num_optimal) {
                     choice = Some(elt);
                 }
             }

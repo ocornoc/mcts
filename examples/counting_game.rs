@@ -1,8 +1,4 @@
-extern crate mcts;
-
-use mcts::*;
-use mcts::tree_policy::*;
-use mcts::transposition_table::*;
+use mcts::{*, tree_policy::*, transposition_table::*};
 
 #[derive(Clone)]
 struct CountingGame(i64);
@@ -31,7 +27,7 @@ impl GameState for CountingGame {
     }
 
     fn make_move(&mut self, mov: &Self::Move) {
-        match *mov {
+        match mov {
             Move::Add => self.0 += 1,
             Move::Sub => self.0 -= 1,
         }
@@ -49,9 +45,12 @@ struct MyEvaluator;
 impl Evaluator<MyMCTS> for MyEvaluator {
     type StateEvaluation = i64;
 
-    fn evaluate_new_state(&self, state: &CountingGame, moves: &Vec<Move>,
-        _: Option<SearchHandle<MyMCTS>>)
-        -> (Vec<()>, i64) {
+    fn evaluate_new_state(
+        &self,
+        state: &CountingGame,
+        moves: &Vec<Move>,
+        _: Option<SearchHandle<MyMCTS>>
+    ) -> (Vec<()>, i64) {
         (vec![(); moves.len()], state.0)
     }
 
@@ -78,15 +77,42 @@ impl MCTS for MyMCTS {
     fn virtual_loss(&self) -> i64 {
         500
     }
+
+    fn cycle_behaviour(&self) -> CycleBehaviour<Self> {
+        CycleBehaviour::UseCurrentEvalWhenCycleDetected
+    }
 }
 
-fn main() {
-    let game = CountingGame(0);
-    let mut mcts = MCTSManager::new(game, MyMCTS, MyEvaluator, UCTPolicy::new(5.0),
-        ApproxTable::new(1024));
+fn single_thread(mut mcts: MCTSManager<MyMCTS>) {
     mcts.playout_n(100000);
     let pv: Vec<_> = mcts.principal_variation_states(10).into_iter().map(|x| x.0).collect();
     println!("Principal variation: {:?}", pv);
     println!("Evaluation of moves:");
     mcts.tree().debug_moves();
+}
+
+fn multi_thread(mut mcts: MCTSManager<MyMCTS>) {
+    mcts.playout_n_parallel(100000, num_cpus::get());
+    let pv: Vec<_> = mcts.principal_variation_states(10).into_iter().map(|x| x.0).collect();
+    println!("Principal variation: {:?}", pv);
+    println!("Evaluation of moves:");
+    mcts.tree().debug_moves();
+}
+
+fn new_mcts() -> MCTSManager<MyMCTS> {
+    let game = CountingGame(0);
+    MCTSManager::new(
+        game,
+        MyMCTS,
+        MyEvaluator,
+        UCTPolicy::new(5.0),
+        ApproxTable::new(1024)
+    )
+}
+
+fn main() {
+    println!("Single threaded:");
+    single_thread(new_mcts());
+    println!("Multithreaded:");
+    multi_thread(new_mcts());
 }

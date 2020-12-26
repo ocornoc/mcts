@@ -1,15 +1,21 @@
 [package]
-authors = ["Jacob Jackson <jacobbfjackson@gmail.com>"]
+authors = ["Grayson Burton <ocornoc@protonmail.com>", "Jacob Jackson <jacobbfjackson@gmail.com>"]
 name = "mcts"
-version = "0.3.0"
+version = "0.4.0"
 description = "This is a library for Monte Carlo tree search."
 repository = "https://github.com/zxqfl/mcts"
 readme = "README.md"
 keywords = ["monte", "carlo", "tree", "search", "ai"]
 categories = ["algorithms"]
 license = "MIT"
+edition = "2018"
+include = ["src/**.rs"]
 
 [dependencies]
-crossbeam = "0.3"
-rand = "0.4"
-smallvec = "0.6"
+crossbeam = "0.8"
+rand = {version = "0.8", features = ["small_rng"]}
+smallvec = "1.5.1"
+rayon = "1.5.0"
+
+[dev-dependencies]
+num_cpus = "1.13"

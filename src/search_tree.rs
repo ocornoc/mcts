@@ -1,15 +1,8 @@
-#![cfg_attr(feature = "nightly", feature(integer_atomics))]
-
-use std;
-
-use atomics::*;
 use super::*;
 use std::sync::Mutex;
 use std::ptr::{null, null_mut};
 use smallvec::SmallVec;
-use std::fmt;
-use std::fmt::{Debug, Display, Formatter};
-
+use std::{fmt, fmt::{Debug, Display, Formatter}};
 use tree_policy::TreePolicy;
 
 /// You're not intended to use this class (use an `MCTSManager` instead),
@@ -196,7 +189,7 @@ impl<Spec: MCTS> SearchTree<Spec> {
     }
 
     pub fn num_nodes(&self) -> usize {
-        self.num_nodes.load(Ordering::SeqCst)
+        self.num_nodes.load(Ordering::Acquire)
     }
 
     #[inline(never)]
@@ -345,7 +338,7 @@ impl<Spec: MCTS> SearchTree<Spec> {
         while crnt.moves.len() != 0 && result.len() < num_moves {
             let choice = self.manager.select_child_after_search(&crnt.moves);
             result.push(choice);
-            let child = choice.child.load(Ordering::SeqCst) as *const SearchNode<Spec>;
+            let child = choice.child.load(Ordering::Acquire) as *const SearchNode<Spec>;
             if child == null() {
                 break;
             } else {
