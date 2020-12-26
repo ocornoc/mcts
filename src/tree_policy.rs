@@ -4,6 +4,46 @@ use std;
 use super::*;
 use search_tree::*;
 
+#[derive(Clone)]
+pub struct PolicyRng {
+    rng: SmallRng
+}
+
+impl PolicyRng {
+    pub fn new() -> Self {
+        let rng = SeedableRng::seed_from_u64(0xF00DBABEC0FFEE60);
+        Self {rng}
+    }
+
+    pub fn select_by_key<T, Iter, KeyFn>(&mut self, elts: Iter, mut key_fn: KeyFn) -> Option<T>
+        where Iter: Iterator<Item=T>, KeyFn: FnMut(&T) -> f64
+    {
+        let mut choice = None;
+        let mut num_optimal = 0;
+        let mut best_so_far: f64 = std::f64::NEG_INFINITY;
+        for elt in elts {
+            let score = key_fn(&elt);
+            if score > best_so_far {
+                choice = Some(elt);
+                num_optimal = 1;
+                best_so_far = score;
+            } else if score == best_so_far {
+                num_optimal += 1;
+                if self.rng.gen_ratio(1.min(num_optimal), num_optimal) {
+                    choice = Some(elt);
+                }
+            }
+        }
+        choice
+    }
+}
+
+impl Default for PolicyRng {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait TreePolicy<Spec: MCTS<TreePolicy=Self>>: Sync + Sized {
     type MoveEvaluation: Sync + Send;
     type ThreadLocalData: Default;
@@ -28,6 +68,32 @@ impl UCTPolicy {
 
     pub fn exploration_constant(&self) -> f64 {
         self.exploration_constant
+    }
+}
+
+impl<Spec: MCTS<TreePolicy=Self>> TreePolicy<Spec> for UCTPolicy
+{
+    type ThreadLocalData = PolicyRng;
+    type MoveEvaluation = ();
+
+    fn choose_child<'a, MoveIter>(&self, moves: MoveIter, mut handle: SearchHandle<Spec>) -> &'a MoveInfo<Spec>
+        where MoveIter: Iterator<Item=&'a MoveInfo<Spec>> + Clone
+    {
+        let total_visits = moves.clone().map(|x| x.visits()).sum::<u64>();
+        let adjusted_total = (total_visits + 1) as f64;
+        let ln_adjusted_total = adjusted_total.ln();
+        handle.thread_data().policy_data.select_by_key(moves, |mov| {
+            let sum_rewards = mov.sum_rewards();
+            let child_visits = mov.visits();
+            // http://mcts.ai/pubs/mcts-survey-master.pdf
+            if child_visits == 0 {
+                std::f64::INFINITY
+            } else {
+                let explore_term = 2.0 * (ln_adjusted_total / child_visits as f64).sqrt();
+                let mean_action_value = sum_rewards as f64 / child_visits as f64;
+                self.exploration_constant * explore_term + mean_action_value
+            }
+        }).unwrap()
     }
 }
 
@@ -69,32 +135,6 @@ impl AlphaGoPolicy {
     }
 }
 
-impl<Spec: MCTS<TreePolicy=Self>> TreePolicy<Spec> for UCTPolicy
-{
-    type ThreadLocalData = PolicyRng;
-    type MoveEvaluation = ();
-
-    fn choose_child<'a, MoveIter>(&self, moves: MoveIter, mut handle: SearchHandle<Spec>) -> &'a MoveInfo<Spec>
-        where MoveIter: Iterator<Item=&'a MoveInfo<Spec>> + Clone
-    {
-        let total_visits = moves.clone().map(|x| x.visits()).sum::<u64>();
-        let adjusted_total = (total_visits + 1) as f64;
-        let ln_adjusted_total = adjusted_total.ln();
-        handle.thread_data().policy_data.select_by_key(moves, |mov| {
-            let sum_rewards = mov.sum_rewards();
-            let child_visits = mov.visits();
-            // http://mcts.ai/pubs/mcts-survey-master.pdf
-            if child_visits == 0 {
-                std::f64::INFINITY
-            } else {
-                let explore_term = 2.0 * (ln_adjusted_total / child_visits as f64).sqrt();
-                let mean_action_value = sum_rewards as f64 / child_visits as f64;
-                self.exploration_constant * explore_term + mean_action_value
-            }
-        }).unwrap()
-    }
-}
-
 impl<Spec: MCTS<TreePolicy=Self>> TreePolicy<Spec> for AlphaGoPolicy
 {
     type ThreadLocalData = PolicyRng;
@@ -126,45 +166,5 @@ impl<Spec: MCTS<TreePolicy=Self>> TreePolicy<Spec> for AlphaGoPolicy
                 "Sum of evaluations is {} (should sum to 1)",
                 evaln_sum);
         }
-    }
-}
-
-#[derive(Clone)]
-pub struct PolicyRng {
-    rng: SmallRng
-}
-
-impl PolicyRng {
-    pub fn new() -> Self {
-        let rng = SeedableRng::seed_from_u64(0xF00DBABEC0FFEE60);
-        Self {rng}
-    }
-
-    pub fn select_by_key<T, Iter, KeyFn>(&mut self, elts: Iter, mut key_fn: KeyFn) -> Option<T>
-        where Iter: Iterator<Item=T>, KeyFn: FnMut(&T) -> f64
-    {
-        let mut choice = None;
-        let mut num_optimal = 0;
-        let mut best_so_far: f64 = std::f64::NEG_INFINITY;
-        for elt in elts {
-            let score = key_fn(&elt);
-            if score > best_so_far {
-                choice = Some(elt);
-                num_optimal = 1;
-                best_so_far = score;
-            } else if score == best_so_far {
-                num_optimal += 1;
-                if self.rng.gen_ratio(1.min(num_optimal), num_optimal) {
-                    choice = Some(elt);
-                }
-            }
-        }
-        choice
-    }
-}
-
-impl Default for PolicyRng {
-    fn default() -> Self {
-        Self::new()
     }
 }
