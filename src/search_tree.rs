@@ -105,7 +105,7 @@ impl<Spec: MCTS> Display for MoveInfo<Spec> where Move<Spec>: Display {
         } else {
             write!(f, "{} [{} visit{}] [{} avg reward]{}",
                 self.mov, self.visits(), if self.visits() == 1 {""} else {"s"},
-                self.sum_rewards() as f64 / self.visits() as f64,
+                self.sum_rewards() as f32 / self.visits() as f32,
                 own_str)
         }
     }
@@ -125,7 +125,7 @@ impl<Spec: MCTS> Debug for MoveInfo<Spec> where Move<Spec>: Debug {
         } else {
             write!(f, "{:?} [{} visit{}] [{} avg reward]{}",
                 self.mov, self.visits(), if self.visits() == 1 {""} else {"s"},
-                self.sum_rewards() as f64 / self.visits() as f64,
+                self.sum_rewards() as f32 / self.visits() as f32,
                 own_str)
         }
     }
