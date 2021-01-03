@@ -104,20 +104,11 @@ unsafe impl<K: TranspositionHash, V> Send for ApproxQuadraticProbingHashTable<K,
 pub type ApproxTable<Spec> =
          ApproxQuadraticProbingHashTable<<Spec as MCTS>::State, SearchNode<Spec>>;
 
-fn get_or_write<'a, V>(ptr: &AtomicPtr<V>, v: &'a V) -> Option<&'a V> {
-    let result = ptr.compare_and_swap(
+unsafe fn get_or_write<'a, V>(ptr: &AtomicPtr<V>, v: &'a V) -> Option<&'a V> {
+    ptr.compare_and_swap(
         std::ptr::null_mut(),
         v as *const _ as *mut _,
-        Ordering::Relaxed);
-    convert(result)
-}
-
-fn convert<'a, V>(ptr: *const V) -> Option<&'a V> {
-    if ptr == std::ptr::null() {
-        None
-    } else {
-        unsafe { Some(&*ptr) }
-    }
+        Ordering::Relaxed).as_ref()
 }
 
 const PROBE_LIMIT: usize = 16;
@@ -143,13 +134,13 @@ unsafe impl<Spec> TranspositionTable<Spec> for ApproxTable<Spec>
                 if value_here != std::ptr::null_mut() {
                     return unsafe { Some(&*value_here) };
                 }
-                return get_or_write(&entry.v, value);
+                return unsafe { get_or_write(&entry.v, value) };
             }
             if key_here == 0 {
                 let key_here = entry.k.compare_and_swap(0, my_hash as FakeU64, Ordering::Relaxed);
                 self.size.fetch_add(1, Ordering::Relaxed);
                 if key_here == 0 || key_here == my_hash as FakeU64 {
-                    return get_or_write(&entry.v, value);
+                    return unsafe { get_or_write(&entry.v, value) };
                 }
             }
             posn += inc;
@@ -165,7 +156,7 @@ unsafe impl<Spec> TranspositionTable<Spec> for ApproxTable<Spec>
             let entry = unsafe { self.arr.get_unchecked(posn) };
             let key_here = entry.k.load(Ordering::Relaxed) as u64;
             if key_here == my_hash {
-                return convert(entry.v.load(Ordering::Relaxed));
+                return unsafe { entry.v.load(Ordering::Relaxed).as_ref() };
             }
             if key_here == 0 {
                 return None;
