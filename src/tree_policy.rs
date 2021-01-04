@@ -6,7 +6,7 @@ use search_tree::*;
 
 #[derive(Clone)]
 pub struct PolicyRng {
-    rng: SmallRng
+    pub rng: SmallRng
 }
 
 impl PolicyRng {
